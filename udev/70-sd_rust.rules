@@ -1,0 +1,36 @@
+# udev rules for sd_rust — installed by `sd_rust --create-udev-rules`.
+#
+# FILENAME NUMBER MATTERS: this file MUST sort *before* 71-seat.rules and
+# 73-seat-late.rules. Those system rules consume the `uaccess` tag — 71-seat
+# adds the `seat` tag to uaccess devices, and 73-seat-late runs the builtin that
+# actually applies the ACL (`TAG=="uaccess", RUN{builtin}+="uaccess"`). udev
+# accumulates tags top-to-bottom, so a `TAG+="uaccess"` added by a 99-* rule
+# would run *after* those matches and never take effect. systemd's own
+# 70-uaccess.rules sits at 70 for exactly this reason; we match it. Do NOT
+# renumber this to 99.
+#
+# Least privilege: each rule is scoped to exactly the device sd_rust needs, and
+# access is granted via `uaccess` (a logind ACL tied to the *active local
+# session*) rather than a world-readable chmod or a broad static group. When you
+# log in at the seat, you get access; when you log out, you don't.
+
+# --- Elgato Stream Deck MK.2 (USB 0fd9:00a5) -------------------------------
+# sd_rust talks to the deck over its hidraw node (hidapi's Linux backend).
+# Without this rule the node defaults to world-accessible 0666 on many systems;
+# uaccess tightens it to the seated user. ATTRS walks up to the USB device for
+# the vendor/product match because hidraw is a grandchild of the USB device.
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="00a5", TAG+="uaccess"
+# Belt-and-suspenders: also tag the USB device node itself.
+SUBSYSTEM=="usb", ATTR{idVendor}=="0fd9", ATTR{idProduct}=="00a5", TAG+="uaccess"
+
+# --- /dev/uinput (keyboard-macro virtual keyboard) -------------------------
+# SECURITY NOTE: this grant lets the seated user's session create a virtual
+# input device via uinput, which can inject keystrokes into ANY application on
+# the system. That capability is inherent to the uinput-based macro feature —
+# there is no narrower kernel interface for synthesizing a real keyboard. We
+# scope it as tightly as the mechanism allows: uaccess ties it to the active
+# local session (no static world/group write), and `static_node` ensures the
+# node exists with the tag applied even before the module is first opened.
+# Treat your sd_rust config as trust-sensitive accordingly (it defines the
+# macros that will be typed). See the README for the full rationale.
+KERNEL=="uinput", SUBSYSTEM=="misc", OPTIONS+="static_node=uinput", TAG+="uaccess"
