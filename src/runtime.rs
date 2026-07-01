@@ -215,24 +215,21 @@ impl Runtime {
 
             if !pressed.is_empty() {
                 self.last_input = Instant::now();
-                let sleep_pressed = pressed.iter().any(|&i| self.is_sleep_key(i));
-                if sleep_pressed {
-                    // Sleep key: toggle the manual off/on state (exclusive — any
-                    // other keys pressed the same tick are ignored).
-                    self.slept = !self.slept;
-                    self.set_display(if self.slept { Display::Blanked } else { Display::Full });
-                    debug!("sleep toggled → {}", if self.slept { "off" } else { "on" });
-                } else if self.slept {
-                    // Manually asleep: only the Sleep key wakes it. Ignore others.
-                } else {
-                    // First press while fully blanked (idle) wakes but is CONSUMED
-                    // (§10); a press while merely dimmed acts normally.
-                    let consume = self.display == Display::Blanked;
+                if self.display == Display::Blanked {
+                    // Off (idle blank or manual sleep): ANY press wakes the deck,
+                    // and that press is CONSUMED — it doesn't trigger its action.
+                    self.slept = false;
                     self.set_display(Display::Full);
-                    if !consume {
-                        for index in pressed {
-                            self.on_press(index);
-                        }
+                } else if pressed.iter().any(|&i| self.is_sleep_key(i)) {
+                    // Sleep key while awake → blank the deck until any press wakes it.
+                    self.slept = true;
+                    self.set_display(Display::Blanked);
+                    debug!("sleep");
+                } else {
+                    // Normal press: un-dim if dimmed, then run the action(s).
+                    self.set_display(Display::Full);
+                    for index in pressed {
+                        self.on_press(index);
                     }
                 }
             } else if !self.slept {

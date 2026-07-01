@@ -268,10 +268,9 @@ action = "sleep"
 icon = "/usr/share/icons/breeze-dark/actions/22/system-suspend.svg"
 ```
 
-Press to turn the backlight **off**; press again to turn it back on. Unlike the
-idle blank, it stays off regardless of `idle_timeout_secs` until this key is
-pressed again — and while off, **only this key** wakes the deck (other presses
-are ignored).
+Press to turn the backlight **off**. Unlike the idle blank, it stays off
+regardless of `idle_timeout_secs`. While off, pressing **any** key wakes the
+deck, and that waking press is consumed (it doesn't trigger its action).
 
 ### Example
 
