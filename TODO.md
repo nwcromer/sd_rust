@@ -34,11 +34,6 @@ Central backlog. Items tagged `[code: file.rs]` also have an inline
 - **Steam game launcher action** — launch a specific game by id (e.g.
   `steam://rungameid/570`); starts Steam first if needed. Generalize to other
   stores. `[code: launch.rs]`
-- **Network widget scaling (partial)** — absolute log scale against link speed
-  is done; when link speed is unreported it still falls back to relative. Could
-  add a config `max_mbps` override or a manual scale for that case.
-  `[code: widgets.rs]`
-
 ## Polish / assets
 
 - **Better OBS button icons** — the record/replay icons in
