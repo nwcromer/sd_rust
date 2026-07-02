@@ -21,6 +21,7 @@ use anyhow::{Context, Result};
 use log::{debug, info, warn};
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver as StdReceiver;
 
 use crate::audio::{self, Target};
@@ -112,7 +113,36 @@ pub struct Runtime {
     error_tile: Tile,
 }
 
+/// Set by the SIGTERM/SIGINT handler and polled by the main loop. The handler
+/// itself does nothing but this atomic store (which is async-signal-safe);
+/// the actual device cleanup — blanking the panel over USB — runs back on the
+/// main thread once the loop notices the flag.
+static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn on_signal(_sig: libc::c_int) {
+    SHUTDOWN.store(true, Ordering::SeqCst);
+}
+
+/// Install [`on_signal`] for SIGTERM (systemd stop/restart/reboot/shutdown) and
+/// SIGINT (Ctrl+C). We deliberately omit `SA_RESTART` so a signal arriving
+/// mid-`read_input` interrupts the blocking USB read (EINTR) instead of
+/// restarting it, letting the loop reach the flag check promptly.
+fn install_signal_handlers() {
+    // SAFETY: `on_signal` only performs an atomic store — async-signal-safe.
+    // We register it for two signals with an empty mask and default flags.
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = on_signal as *const () as libc::sighandler_t;
+        libc::sigemptyset(&mut action.sa_mask);
+        for sig in [libc::SIGTERM, libc::SIGINT] {
+            libc::sigaction(sig, &action, std::ptr::null_mut());
+        }
+    }
+}
+
 pub fn run(config: Config) -> Result<()> {
+    install_signal_handlers();
+
     let keys = build_key_map(&config);
 
     let keyboard = match MacroKeyboard::new() {
@@ -195,6 +225,10 @@ pub fn run(config: Config) -> Result<()> {
 impl Runtime {
     fn main_loop(&mut self) -> Result<()> {
         loop {
+            if SHUTDOWN.load(Ordering::Relaxed) {
+                break;
+            }
+
             // Resume-from-suspend: restore the backlight so the deck reflects
             // whatever changed while asleep (but stay off if manually slept).
             if self.resume_rx.try_recv().is_ok() {
@@ -205,6 +239,11 @@ impl Runtime {
             let pressed = match self.device.poll_presses(INPUT_POLL, &mut self.prev_state) {
                 Ok(pressed) => pressed,
                 Err(e) => {
+                    // A shutdown signal interrupts the blocking read (EINTR) and
+                    // surfaces here as an error — exit rather than reconnecting.
+                    if SHUTDOWN.load(Ordering::Relaxed) {
+                        break;
+                    }
                     warn!("Stream Deck read failed ({e:#}); reconnecting");
                     self.device = device::reconnect();
                     self.prev_state = [false; KEY_COUNT];
@@ -254,6 +293,15 @@ impl Runtime {
                 self.repaint();
             }
         }
+
+        // Graceful shutdown (SIGTERM/SIGINT): don't leave the deck frozen on its
+        // last frame — blank the keys and kill the backlight so a dark panel
+        // reflects that the daemon is gone.
+        info!("shutting down — blanking the deck");
+        if let Err(e) = self.device.blank() {
+            warn!("failed to blank the deck on shutdown: {e:#}");
+        }
+        Ok(())
     }
 
     /// Restore the backlight after a resume or reconnect. If the deck is

@@ -83,6 +83,21 @@ impl Device {
         self.deck.flush().context("failed to flush images to the Stream Deck")
     }
 
+    /// Blank every key and turn off the backlight. Called on graceful shutdown
+    /// so the deck doesn't freeze on its last rendered frame after the daemon
+    /// exits — a lit, static panel reads as "still running" when it isn't.
+    pub fn blank(&self) -> Result<()> {
+        self.deck
+            .clear_all_button_images()
+            .context("failed to clear button images")?;
+        self.deck
+            .flush()
+            .context("failed to flush blank images")?;
+        self.deck
+            .set_brightness(0)
+            .context("failed to turn off backlight")
+    }
+
     /// Set brightness as a percentage (0 fully blanks the panel).
     pub fn set_brightness(&self, percent: u8) -> Result<()> {
         self.deck
