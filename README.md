@@ -204,9 +204,10 @@ Recording actions and the state each reflects:
 
 | `action` | Press does | Image follows |
 |----------|-----------|----------------|
-| `obs_record_start` | start recording | recording state |
-| `obs_record_stop`  | stop recording  | recording state |
-| `obs_record_pause` | toggle pause    | recording state (stopped/recording/paused) |
+| `obs_record_start`  | start recording | recording state |
+| `obs_record_stop`   | stop recording  | recording state |
+| `obs_record_pause`  | toggle pause    | recording state (stopped/recording/paused) |
+| `obs_record_toggle` | toggle recording (start if stopped, stop if recording) | recording state (stopped/recording/paused) |
 
 Recording state is event-driven, so changes made in the OBS GUI are reflected.
 
@@ -226,9 +227,10 @@ icon = "/path/replay-save.png"
 
 | `action` | Press does | Image follows |
 |----------|-----------|----------------|
-| `obs_replay_start` | enable the replay buffer  | armed/disarmed |
-| `obs_replay_stop`  | disable the replay buffer | armed/disarmed |
-| `obs_replay_save`  | save the buffer | (static; no success feedback) |
+| `obs_replay_start`  | enable the replay buffer  | armed/disarmed |
+| `obs_replay_stop`   | disable the replay buffer | armed/disarmed |
+| `obs_replay_toggle` | toggle the replay buffer (arm if off, disarm if on) | armed/disarmed |
+| `obs_replay_save`   | save the buffer | (static; no success feedback) |
 
 While OBS is disconnected, OBS keys show their `icon_disconnected` (or the
 sensible fallback). A failed OBS action (OBS not connected, or e.g. saving with
