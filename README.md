@@ -221,8 +221,10 @@ icon_disarmed     = "/path/replay-off.png"
 icon_disconnected = "/path/replay-disc.png"   # optional; falls back to icon_disarmed
 
 [key.r2c3]
-action = "obs_replay_save"         # not a toggle, no state — static image
-icon = "/path/replay-save.png"
+action = "obs_replay_save"         # press saves; image reflects armed/disarmed
+icon_armed        = "/path/replay-save.png"
+icon_disarmed     = "/path/replay-save-off.png"
+icon_disconnected = "/path/replay-disc.png"   # optional; falls back to icon_disarmed
 ```
 
 | `action` | Press does | Image follows |
@@ -230,7 +232,7 @@ icon = "/path/replay-save.png"
 | `obs_replay_start`  | enable the replay buffer  | armed/disarmed |
 | `obs_replay_stop`   | disable the replay buffer | armed/disarmed |
 | `obs_replay_toggle` | toggle the replay buffer (arm if off, disarm if on) | armed/disarmed |
-| `obs_replay_save`   | save the buffer | (static; no success feedback) |
+| `obs_replay_save`   | save the buffer (no success feedback) | armed/disarmed |
 
 While OBS is disconnected, OBS keys show their `icon_disconnected` (or the
 sensible fallback). A failed OBS action (OBS not connected, or e.g. saving with
