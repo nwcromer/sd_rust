@@ -174,9 +174,8 @@ fn default_obs_port() -> u16 {
 /// the renderer picks the image from live state. A key that omits the per-state
 /// icons falls back to a blank tile for that state.
 ///
-/// Fields are inlined (not `#[serde(flatten)]`) on purpose: `flatten` combined
-/// with an internally-tagged enum is not reliably supported by serde, so we
-/// spell the icon fields out per variant.
+/// OBS variants pull their per-state icon group in with `#[serde(flatten)]`; the
+/// two mute variants spell their icons out inline.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum KeyConfig {
