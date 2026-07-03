@@ -35,8 +35,8 @@ relates to. TODOs live here, not as markers in the code.
 
 ## Polish / assets
 
-- **Better OBS button icons** — the record/replay icons in
-  `~/.config/sd_rust/icons/obs/` are hand-drawn placeholders (gray/red record
-  dot, amber pause, green replay, blue save arrow).
 - **Icon margin tuning** — content-aware trim+margin is implemented (8px); the
   margin amount may want tuning.
+- **More OBS icons** — the bundled set in `assets/icons/obs/` doesn't yet cover
+  every OBS action: record start/stop, replay arm/disarm/toggle, and a
+  save-disconnected state.
