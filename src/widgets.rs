@@ -49,11 +49,11 @@ impl Widget {
         let mut widget = Widget {
             sampler,
             interval: refresh_secs.map(Duration::from_secs).unwrap_or(DEFAULT_REFRESH),
-            // Force an immediate first render on the first tick.
-            last_render: Instant::now() - Duration::from_secs(3600),
+            last_render: Instant::now(),
             generation: 0,
             tile: render::blank_tile(),
         };
+        // Sample + render now so the first paint shows real data, not a blank tile.
         widget.sample_and_render();
         widget
     }

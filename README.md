@@ -353,7 +353,7 @@ No network exposure beyond the configured local OBS websocket. No telemetry.
 
 ## Deferred to v2
 
-Generic run-any-command action; multi-page layouts; configurable awake
-brightness; a GPU-card override and NVIDIA/Intel GPU support; libpulse/event-
-driven mute (vs the current libpulse poll); dim-on-lock / blank-on-screensaver;
-per-key error icons; layout-aware macro mapping; multi-device support.
+Generic run-any-command action; multi-page layouts; a GPU-card override and
+NVIDIA/Intel GPU support; event-driven mute (vs the current libpulse poll);
+dim-on-lock / blank-on-screensaver; per-key error icons; layout-aware macro
+mapping; multi-device support.
