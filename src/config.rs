@@ -241,8 +241,8 @@ pub enum KeyConfig {
     },
 
     /// Toggle the deck's backlight off ("sleep") / on. Unlike the idle blank,
-    /// it stays off regardless of the idle timeout until this key is pressed
-    /// again (only this key wakes it).
+    /// it stays off regardless of the idle timeout until any key is pressed
+    /// (that waking press is consumed and doesn't trigger its action).
     Sleep {
         #[serde(default)]
         icon: Option<PathBuf>,
