@@ -1,7 +1,7 @@
 # sd_rust — TODO
 
-Central backlog. Items tagged `[code: file.rs]` also have an inline
-`// TODO (v2):` marker at that location (the v1 spec required inline markers).
+Central backlog. A `[code: file.rs]` tag points at the source file an item
+relates to. TODOs live here, not as markers in the code.
 
 ## Deferred from the v1 spec
 
