@@ -29,11 +29,16 @@ use crate::launch;
 use crate::obs::{self, ObsAction, ObsCommand, ObsEvent, ObsHandle};
 use crate::osd;
 use crate::render::{self, Tile};
+use crate::screensaver::Matrix;
 use crate::state::{LiveState, RecordState, ReplayState};
 use crate::widgets::Widget;
 
 /// How long each `poll_presses` call blocks — also the loop tick.
 const INPUT_POLL: Duration = Duration::from_millis(100);
+
+/// Loop tick while the screensaver runs (its frame interval), kept separate from
+/// [`INPUT_POLL`].
+const SCREENSAVER_FRAME: Duration = Duration::from_millis(100);
 
 /// How often to re-read mute state over the persistent PulseAudio connection.
 /// Kept short so a mute toggled elsewhere (KDE shortcut, panel) reflects on the
@@ -53,6 +58,8 @@ const ERROR_FLASH: Duration = Duration::from_millis(800);
 enum Display {
     Full,
     Dimmed,
+    /// Animated screensaver (backlight on); sits between Dimmed and Blanked.
+    Screensaver,
     Blanked,
 }
 
@@ -105,9 +112,15 @@ pub struct Runtime {
     brightness: u8,
     dim_brightness: u8,
     dim_timeout: Option<Duration>,
+    screensaver_timeout: Option<Duration>,
     idle_timeout: Option<Duration>,
     last_input: Instant,
     display: Display,
+    /// Matrix screensaver animator; `None` when no screensaver is configured.
+    screensaver: Option<Matrix>,
+    /// Last screensaver frame (15 tiles); `None` forces a full upload on the
+    /// next frame (set on entry). Used to upload only keys that changed.
+    screensaver_prev: Option<Vec<Tile>>,
     /// Manual "sleep" (via a Sleep key) — forces the backlight off regardless of
     /// the idle timers until the Sleep key is pressed again.
     slept: bool,
@@ -214,6 +227,15 @@ pub fn run(config: Config) -> Result<()> {
 
     let resume_rx = crate::suspend::spawn_resume_monitor();
 
+    // Only build the animator when it can actually run (a kind *and* a timeout);
+    // otherwise the Screensaver state is unreachable and it'd be dead state.
+    let screensaver = match config.screensaver {
+        config::Screensaver::Matrix if config.screensaver_timeout().is_some() => {
+            Some(Matrix::new())
+        }
+        _ => None,
+    };
+
     let device = Device::connect()?;
     device.set_brightness(config.brightness()).ok();
     let mut rt = Runtime {
@@ -235,9 +257,12 @@ pub fn run(config: Config) -> Result<()> {
         brightness: config.brightness(),
         dim_brightness: config.dim_brightness(),
         dim_timeout: config.dim_timeout(),
+        screensaver_timeout: config.screensaver_timeout(),
         idle_timeout: config.idle_timeout(),
         last_input: Instant::now(),
         display: Display::Full,
+        screensaver,
+        screensaver_prev: None,
         slept: false,
         resume_rx,
         error_until: [None; KEY_COUNT],
@@ -265,7 +290,11 @@ impl Runtime {
                 self.refresh_audio();
             }
 
-            let pressed = match self.device.poll_presses(INPUT_POLL, &mut self.prev_state) {
+            let poll_timeout = match self.display {
+                Display::Screensaver => SCREENSAVER_FRAME,
+                _ => INPUT_POLL,
+            };
+            let pressed = match self.device.poll_presses(poll_timeout, &mut self.prev_state) {
                 Ok(pressed) => pressed,
                 Err(e) => {
                     // A shutdown signal interrupts the blocking read (EINTR) and
@@ -286,12 +315,12 @@ impl Runtime {
 
             if !pressed.is_empty() {
                 self.last_input = Instant::now();
-                if self.display == Display::Blanked {
-                    // Off (idle blank or manual sleep): ANY press wakes the deck,
-                    // and that press is CONSUMED — it doesn't trigger its action.
+                if matches!(self.display, Display::Blanked | Display::Screensaver) {
+                    // Off/screensaver: ANY press wakes the deck, and that press is
+                    // CONSUMED — it doesn't trigger its action.
                     self.slept = false;
                     self.set_display(Display::Full);
-                    self.refresh_audio(); // polling is paused while blanked; catch up on wake
+                    self.refresh_audio(); // polling paused while dark (blank/screensaver); catch up on wake
                 } else if pressed.iter().any(|&i| self.is_sleep_key(i)) {
                     // Sleep key while awake → blank the deck until any press wakes it.
                     self.slept = true;
@@ -314,16 +343,20 @@ impl Runtime {
 
             self.drain_obs();
 
-            // While fully blanked the panel is dark and frozen — skip the mute
-            // poll, widget re-render, and repaint. Nothing is shown, so the
-            // state only needs refreshing on wake (done in the press/resume paths).
-            if self.display != Display::Blanked {
-                if self.last_audio_poll.elapsed() >= AUDIO_POLL_INTERVAL {
-                    self.refresh_audio();
+            // Blanked/screensaver: the live key content is hidden, so skip the
+            // mute poll, widget re-render, and normal repaint. State is refreshed
+            // on wake (press/resume paths). The screensaver draws its own frame.
+            match self.display {
+                Display::Blanked => {}
+                Display::Screensaver => self.draw_screensaver(),
+                _ => {
+                    if self.last_audio_poll.elapsed() >= AUDIO_POLL_INTERVAL {
+                        self.refresh_audio();
+                    }
+                    self.tick_widgets();
+                    self.expire_flashes();
+                    self.repaint();
                 }
-                self.tick_widgets();
-                self.expire_flashes();
-                self.repaint();
             }
         }
 
@@ -357,13 +390,20 @@ impl Runtime {
         matches!(self.keys[index], Some(KeyConfig::Sleep { .. }))
     }
 
-    /// The backlight state implied by how long we've been idle.
+    /// The display state implied by how long we've been idle. The idle hierarchy
+    /// is dim < screensaver < blank: checked deepest-first so once a deeper
+    /// threshold is crossed it wins, regardless of how the timeouts are ordered.
     fn idle_display(&self) -> Display {
         let idle = self.last_input.elapsed();
         if let Some(t) = self.idle_timeout
             && idle >= t
         {
             return Display::Blanked;
+        }
+        if let Some(t) = self.screensaver_timeout
+            && idle >= t
+        {
+            return Display::Screensaver;
         }
         if let Some(t) = self.dim_timeout
             && idle >= t
@@ -381,17 +421,29 @@ impl Runtime {
         }
         let level = match state {
             Display::Full => self.brightness,
+            // The screensaver draws its own frames, so it needs the backlight on.
             Display::Dimmed => self.dim_brightness,
+            Display::Screensaver => self.brightness,
             Display::Blanked => 0,
         };
+        // Waking to a lit state from a dark one (blank or screensaver): repaint
+        // the real keys while the backlight is still off, *then* raise it. The
+        // device still holds the last dark-state frame — after a screensaver that
+        // is rain — which would otherwise flash for a tick before the normal
+        // repaint replaced it.
+        if matches!(self.display, Display::Blanked | Display::Screensaver)
+            && state != Display::Blanked
+        {
+            self.force_full_repaint();
+            self.repaint();
+        }
         if self.device.set_brightness(level).is_err() {
             return; // device likely gone; retry next tick
         }
-        let was_blanked = self.display == Display::Blanked;
         self.display = state;
         debug!("display → {state:?} (brightness {level})");
-        if was_blanked {
-            self.force_full_repaint();
+        if state == Display::Screensaver {
+            self.screensaver_prev = None; // force a full first frame
         }
     }
 
@@ -607,6 +659,38 @@ impl Runtime {
     /// Force every key to repaint on the next pass (used after reconnect/resume).
     fn force_full_repaint(&mut self) {
         self.last_visual = [None; KEY_COUNT];
+    }
+
+    /// Advance the screensaver one frame and upload only the keys whose tile
+    /// changed since the last frame (keys with no rain this frame stay black and
+    /// are skipped), trimming USB traffic.
+    fn draw_screensaver(&mut self) {
+        let tiles = match self.screensaver.as_mut() {
+            Some(anim) => {
+                anim.step();
+                anim.render()
+            }
+            None => return, // shouldn't happen: state is only entered when Some
+        };
+        let mut dirty = false;
+        for (index, tile) in tiles.iter().enumerate() {
+            let changed = self.screensaver_prev.as_ref().is_none_or(|p| p[index] != *tile);
+            if changed
+                && self
+                    .device
+                    .set_key_image(index, render::tile_to_image(tile.clone()))
+                    .is_ok()
+            {
+                dirty = true;
+            }
+        }
+        if dirty && self.device.flush().is_err() {
+            // Device likely gone; the next read error drives reconnect. Drop the
+            // cached frame so the post-reconnect repaint re-sends everything.
+            self.screensaver_prev = None;
+            return;
+        }
+        self.screensaver_prev = Some(tiles);
     }
 
     /// Whether record keys should show the "capturing nothing" warning — only

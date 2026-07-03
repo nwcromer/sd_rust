@@ -24,8 +24,6 @@ relates to. TODOs live here, not as markers in the code.
 
 - **Full-deck image** — slice one source image across the 3×5 grid so the keys
   together show one picture. `[code: render.rs]`
-- **Matrix-style screensaver** — animated "digital rain" across the keys on idle
-  instead of a hard blank. `[code: runtime.rs]`
 - **Text labels on graphs** — optional "CPU"/"GPU" overlay; needs a bitmap font
   or a font dependency (v1 is font-free). `[code: widgets.rs]`
 - **Show a tray-only running app** — when an app is running but only in the

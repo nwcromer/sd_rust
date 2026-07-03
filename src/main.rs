@@ -15,6 +15,7 @@ mod osd;
 mod prompt;
 mod render;
 mod runtime;
+mod screensaver;
 mod service;
 mod state;
 mod suspend;

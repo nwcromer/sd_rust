@@ -57,6 +57,16 @@ pub struct Config {
     #[serde(default = "default_dim_brightness")]
     pub dim_brightness: u8,
 
+    /// Idle screensaver kind. Defaults to none (dim straight to blank).
+    #[serde(default)]
+    pub screensaver: Screensaver,
+
+    /// Show the screensaver after this many seconds of no input. `0` disables it.
+    /// The idle hierarchy is dim < screensaver < blank: whichever crossed
+    /// threshold is deepest wins, so the screensaver never runs once blanked.
+    #[serde(default)]
+    pub screensaver_timeout_secs: u64,
+
     /// Optional global override for the failure-feedback icon. When unset the
     /// bundled default error icon is used.
     #[serde(default)]
@@ -107,6 +117,25 @@ impl Config {
     pub fn dim_brightness(&self) -> u8 {
         self.dim_brightness.min(100)
     }
+
+    /// Idle duration before the screensaver (`None` if no kind or timeout set).
+    pub fn screensaver_timeout(&self) -> Option<Duration> {
+        match (self.screensaver, self.screensaver_timeout_secs) {
+            (Screensaver::None, _) | (_, 0) => None,
+            (_, n) => Some(Duration::from_secs(n)),
+        }
+    }
+}
+
+/// Idle screensaver kind, shown between the dim and blank stages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Screensaver {
+    /// No screensaver — the deck dims straight to blank.
+    #[default]
+    None,
+    /// "Matrix"-style green digital rain across the whole deck.
+    Matrix,
 }
 
 /// OBS obs-websocket v5 connection settings.
@@ -452,6 +481,20 @@ mod tests {
         assert_eq!(resolve_obs_password(&cfg).as_deref(), Some("from-file"));
         unsafe { std::env::remove_var(OBS_PASSWORD_ENV) };
         assert_eq!(resolve_obs_password(&cfg).as_deref(), Some("from-file"));
+    }
+
+    #[test]
+    fn screensaver_timeout_needs_both_a_kind_and_a_nonzero_timeout() {
+        let with = |toml: &str| toml::from_str::<Config>(toml).unwrap().screensaver_timeout();
+        // Kind defaults to none → no screensaver even with a timeout set.
+        assert_eq!(with("screensaver_timeout_secs = 60"), None);
+        // Kind set but timeout 0 (default) → disabled.
+        assert_eq!(with(r#"screensaver = "matrix""#), None);
+        // Both set → enabled.
+        assert_eq!(
+            with("screensaver = \"matrix\"\nscreensaver_timeout_secs = 60"),
+            Some(Duration::from_secs(60))
+        );
     }
 
     #[test]

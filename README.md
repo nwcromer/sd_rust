@@ -97,13 +97,18 @@ addressed by **grid coordinate** `rRcC`: rows `1..3` top-to-bottom, columns
 ### Global options
 
 ```toml
-# Backlight. brightness = awake level (0–100). After dim_timeout_secs of no
-# input the deck dims to dim_brightness; after idle_timeout_secs it blanks fully
-# (backlight off). 0 disables that stage. The first press while fully blanked is
-# consumed (just wakes); a press while only dimmed acts normally.
+# Backlight. brightness = awake level (0–100). The idle hierarchy is
+# dim < screensaver < blank: after dim_timeout_secs the deck dims to
+# dim_brightness; after screensaver_timeout_secs it shows the screensaver; after
+# idle_timeout_secs it blanks fully (backlight off). 0 disables that stage.
+# Whichever crossed threshold is deepest wins. The first press while blanked or
+# in the screensaver is consumed (just wakes); a press while only dimmed acts
+# normally.
 brightness = 100                  # default 100
 dim_timeout_secs = 0              # 0 = no dimming
 dim_brightness = 30               # brightness when dimmed
+screensaver = "none"             # "none" (default) or "matrix" (green rain)
+screensaver_timeout_secs = 0     # show screensaver after N s; 0 disables
 idle_timeout_secs = 300           # blank after ~5 min; 0 disables
 
 # Optional override for the failure-feedback icon (bundled default otherwise).
