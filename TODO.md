@@ -34,6 +34,7 @@ relates to. TODOs live here, not as markers in the code.
 - **Steam game launcher action** — launch a specific game by id (e.g.
   `steam://rungameid/570`); starts Steam first if needed. Generalize to other
   stores. `[code: launch.rs]`
+
 ## Polish / assets
 
 - **Better OBS button icons** — the record/replay icons in

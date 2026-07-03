@@ -11,7 +11,7 @@
 //! only re-upload keys whose descriptor changed. Re-encoding/uploading 15 JPEGs
 //! every 100 ms would waste USB bandwidth and flicker.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -66,8 +66,9 @@ enum Visual {
     Static,
     /// A mute toggle key; `None` = state not yet known.
     Mute(Option<bool>),
-    /// An OBS recording key.
-    Record(RecordState),
+    /// An OBS recording key; the bool is the "connected but not capturing"
+    /// warning state (shows `icon_not_capturing`).
+    Record(RecordState, bool),
     /// An OBS replay-buffer key.
     Replay(ReplayState),
     /// A widget, identified by its render generation (bumped each refresh).
@@ -117,6 +118,9 @@ pub struct Runtime {
     /// The failure-feedback tile (config override or bundled default) — a single
     /// global error icon.
     error_tile: Tile,
+    /// Global `[obs] icon_not_capturing` path, shown on stopped record keys when
+    /// OBS is connected but capturing nothing. `None` = unset.
+    not_capturing_icon: Option<PathBuf>,
 }
 
 /// Set by the SIGTERM/SIGINT handler and polled by the main loop. The handler
@@ -206,6 +210,8 @@ pub fn run(config: Config) -> Result<()> {
         None => render::default_error_icon(),
     };
 
+    let not_capturing_icon = config.obs.as_ref().and_then(|o| o.icon_not_capturing.clone());
+
     let resume_rx = crate::suspend::spawn_resume_monitor();
 
     let device = Device::connect()?;
@@ -236,6 +242,7 @@ pub fn run(config: Config) -> Result<()> {
         resume_rx,
         error_until: [None; KEY_COUNT],
         error_tile,
+        not_capturing_icon,
     };
 
     rt.refresh_audio();
@@ -429,9 +436,11 @@ impl Runtime {
                     self.obs_connected = false;
                     self.state.record = RecordState::Disconnected;
                     self.state.replay = ReplayState::Disconnected;
+                    self.state.capture_live = None;
                 }
                 ObsEvent::Record(s) => self.state.record = s,
                 ObsEvent::Replay(s) => self.state.replay = s,
+                ObsEvent::CaptureLive(live) => self.state.capture_live = Some(live),
                 ObsEvent::ActionFailed { key, detail } => {
                     warn!("OBS action on {} failed: {detail}", index_to_coord(key));
                     self.flash_error(key);
@@ -600,6 +609,12 @@ impl Runtime {
         self.last_visual = [None; KEY_COUNT];
     }
 
+    /// Whether record keys should show the "capturing nothing" warning — only
+    /// while stopped (a running recording already has its capture).
+    fn record_not_capturing(&self) -> bool {
+        self.state.record == RecordState::Stopped && self.state.capture_live == Some(false)
+    }
+
     /// The desired descriptor for a key given current live state.
     fn visual_for(&self, index: usize) -> Visual {
         // A live error flash overrides whatever the key would normally show.
@@ -617,7 +632,9 @@ impl Runtime {
                 KeyConfig::ObsRecordStart { .. }
                 | KeyConfig::ObsRecordStop { .. }
                 | KeyConfig::ObsRecordPause { .. }
-                | KeyConfig::ObsRecordToggle { .. } => Visual::Record(self.state.record),
+                | KeyConfig::ObsRecordToggle { .. } => {
+                    Visual::Record(self.state.record, self.record_not_capturing())
+                }
                 KeyConfig::ObsReplayStart { .. }
                 | KeyConfig::ObsReplayStop { .. }
                 | KeyConfig::ObsReplayToggle { .. }
@@ -653,7 +670,14 @@ impl Runtime {
             KeyConfig::ObsRecordStart { icons }
             | KeyConfig::ObsRecordStop { icons }
             | KeyConfig::ObsRecordPause { icons }
-            | KeyConfig::ObsRecordToggle { icons } => opt_icon(record_icon(self.state.record, icons)),
+            | KeyConfig::ObsRecordToggle { icons } => {
+                let path = if self.record_not_capturing() {
+                    self.not_capturing_icon.as_deref().or(icons.icon_stopped.as_deref())
+                } else {
+                    record_icon(self.state.record, icons)
+                };
+                opt_icon(path)
+            }
             KeyConfig::ObsReplayStart { icons }
             | KeyConfig::ObsReplayStop { icons }
             | KeyConfig::ObsReplayToggle { icons }

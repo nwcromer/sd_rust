@@ -27,6 +27,9 @@ pub struct LiveState {
     pub system_muted: Option<bool>,
     pub record: RecordState,
     pub replay: ReplayState,
+    /// OBS capture liveness: `Some(false)` = connected but the screen/window
+    /// capture is blind (0x0); `None` = unknown / not polled (opt-in only).
+    pub capture_live: Option<bool>,
 }
 
 impl Default for LiveState {
@@ -36,6 +39,7 @@ impl Default for LiveState {
             system_muted: None,
             record: RecordState::Disconnected,
             replay: ReplayState::Disconnected,
+            capture_live: None,
         }
     }
 }

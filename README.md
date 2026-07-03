@@ -117,6 +117,8 @@ error_icon = "/home/me/.config/sd_rust/icons/error.png"
 host = "localhost"
 port = 4455
 password = "secret"   # prefer the env var below; never commit a real password
+# show_capture_status = true               # opt-in; see "OBS recording" below
+# icon_not_capturing = "/path/warn.png"    # shown on stopped record keys when blind
 ```
 
 The password may instead be supplied via the **`SD_RUST_OBS_PASSWORD`**
@@ -211,6 +213,15 @@ Recording actions and the state each reflects:
 | `obs_record_toggle` | toggle recording (start if stopped, stop if recording) | recording state (stopped/recording/paused) |
 
 Recording state is event-driven, so changes made in the OBS GUI are reflected.
+
+**Capture-status warning (opt-in).** With `[obs] show_capture_status = true`,
+sd_rust polls OBS (~1 s) for whether its screen/window capture is actually
+producing video. While OBS is connected but a capture is blind (0×0 — e.g. the
+Wayland "Share screen" picker was dismissed), every stopped record key shows the
+global `[obs] icon_not_capturing` (falling back to each key's `icon_stopped`) so
+you notice *before* recording. Independently, pressing a record key in that
+state refuses to start and flashes the error icon rather than recording an empty
+video — that guard is always on and needs no config.
 
 #### OBS replay buffer
 

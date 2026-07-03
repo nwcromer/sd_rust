@@ -121,6 +121,14 @@ pub struct ObsConfig {
     /// var (see [`resolve_obs_password`]). **Never logged.**
     #[serde(default)]
     pub password: Option<String>,
+    /// Poll OBS capture liveness (~1s) so record keys can show
+    /// `icon_not_capturing` when connected but capturing nothing. Opt-in.
+    #[serde(default)]
+    pub show_capture_status: bool,
+    /// Shown on any stopped record key while `show_capture_status` is on and
+    /// OBS's screen/window capture is blind (0x0). Falls back to `icon_stopped`.
+    #[serde(default)]
+    pub icon_not_capturing: Option<PathBuf>,
 }
 
 fn default_obs_host() -> String {
@@ -434,6 +442,8 @@ mod tests {
             host: "localhost".into(),
             port: 4455,
             password: Some("from-file".into()),
+            show_capture_status: false,
+            icon_not_capturing: None,
         };
         // SAFETY: single-threaded test; no other thread reads the env here.
         unsafe { std::env::set_var(OBS_PASSWORD_ENV, "from-env") };
