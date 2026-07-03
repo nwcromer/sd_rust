@@ -289,10 +289,13 @@ async fn run_action(client: &obws::Client, action: ObsAction) -> Result<()> {
         ObsAction::RecordTogglePause => {
             client.recording().toggle_pause().await?;
         }
-        // Read the direction ourselves (not the atomic toggle()) so the capture
-        // guard runs on the start edge only; stopping needs no guard.
+        // Read the direction ourselves (not the atomic toggle()) so paused
+        // resumes, and the capture guard runs only on the start edge.
         ObsAction::RecordToggle => {
-            if client.recording().status().await?.active {
+            let status = client.recording().status().await?;
+            if status.paused {
+                client.recording().toggle_pause().await?; // resume, don't stop
+            } else if status.active {
                 client.recording().stop().await?;
             } else {
                 ensure_capture_live(client).await?;

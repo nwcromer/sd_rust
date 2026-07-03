@@ -124,6 +124,9 @@ pub struct Runtime {
     /// Manual "sleep" (via a Sleep key) — forces the backlight off regardless of
     /// the idle timers until the Sleep key is pressed again.
     slept: bool,
+    /// Manual screensaver (via a Screensaver key) — forces it on, suspending the
+    /// idle timers, until any press wakes the deck.
+    screensaver_forced: bool,
     /// Resume-from-suspend notifications (logind `PrepareForSleep`).
     resume_rx: StdReceiver<()>,
     /// Per-key error-flash expiry; `Some(t)` shows the error icon until `t`.
@@ -264,6 +267,7 @@ pub fn run(config: Config) -> Result<()> {
         screensaver,
         screensaver_prev: None,
         slept: false,
+        screensaver_forced: false,
         resume_rx,
         error_until: [None; KEY_COUNT],
         error_tile,
@@ -319,6 +323,7 @@ impl Runtime {
                     // Off/screensaver: ANY press wakes the deck, and that press is
                     // CONSUMED — it doesn't trigger its action.
                     self.slept = false;
+                    self.screensaver_forced = false;
                     self.set_display(Display::Full);
                     self.refresh_audio(); // polling paused while dark (blank/screensaver); catch up on wake
                 } else if pressed.iter().any(|&i| self.is_sleep_key(i)) {
@@ -326,6 +331,13 @@ impl Runtime {
                     self.slept = true;
                     self.set_display(Display::Blanked);
                     debug!("sleep");
+                } else if self.screensaver.is_some()
+                    && pressed.iter().any(|&i| self.is_screensaver_key(i))
+                {
+                    // Screensaver key while awake → start it now (until a press wakes).
+                    self.screensaver_forced = true;
+                    self.set_display(Display::Screensaver);
+                    debug!("screensaver (manual)");
                 } else {
                     // Normal press: un-dim if dimmed, then run the action(s).
                     self.set_display(Display::Full);
@@ -333,7 +345,7 @@ impl Runtime {
                         self.on_press(index);
                     }
                 }
-            } else if !self.slept {
+            } else if !self.slept && !self.screensaver_forced {
                 // Idle → dim, then blank, by elapsed time (suspended while slept).
                 let desired = self.idle_display();
                 if desired != self.display {
@@ -388,6 +400,11 @@ impl Runtime {
     /// Whether the key at `index` is a Sleep-toggle key.
     fn is_sleep_key(&self, index: usize) -> bool {
         matches!(self.keys[index], Some(KeyConfig::Sleep { .. }))
+    }
+
+    /// Whether the key at `index` is a Screensaver key.
+    fn is_screensaver_key(&self, index: usize) -> bool {
+        matches!(self.keys[index], Some(KeyConfig::Screensaver { .. }))
     }
 
     /// The display state implied by how long we've been idle. The idle hierarchy
@@ -547,21 +564,24 @@ impl Runtime {
             KeyConfig::ObsReplayStop { .. } => self.send_obs(index, ObsAction::ReplayStop),
             KeyConfig::ObsReplayToggle { .. } => self.send_obs(index, ObsAction::ReplayToggle),
             KeyConfig::ObsReplaySave { .. } => self.send_obs(index, ObsAction::ReplaySave),
-            // Widget keys aren't pressable; Sleep is handled in the main loop.
-            KeyConfig::Widget { .. } | KeyConfig::Sleep { .. } => Ok(()),
+            // Widget keys aren't pressable; Sleep/Screensaver are handled in the main loop.
+            KeyConfig::Widget { .. } | KeyConfig::Sleep { .. } | KeyConfig::Screensaver { .. } => {
+                Ok(())
+            }
         }
     }
 
-    /// Queue an OBS command, failing fast (for §9 feedback) if OBS isn't
-    /// configured or currently connected. Async command failures (e.g. saving
-    /// with the buffer off) come back later as `ObsEvent::ActionFailed`.
+    /// Queue an OBS command, or silently ignore it (log only, no error flash) if
+    /// OBS isn't configured/connected — the key's grey icon already signals that.
+    /// Async failures (e.g. save with buffer off) still arrive as `ActionFailed`.
     fn send_obs(&self, key: usize, action: ObsAction) -> Result<()> {
-        let handle = self
-            .obs
-            .as_ref()
-            .context("OBS is not configured ([obs] missing from config)")?;
+        let Some(handle) = self.obs.as_ref() else {
+            debug!("OBS action on {} ignored: OBS not configured", index_to_coord(key));
+            return Ok(());
+        };
         if !self.obs_connected {
-            anyhow::bail!("OBS is not connected");
+            debug!("OBS action on {} ignored: OBS not connected", index_to_coord(key));
+            return Ok(());
         }
         handle.send(ObsCommand { action, key });
         Ok(())
@@ -710,7 +730,8 @@ impl Runtime {
             Some(key) => match key {
                 KeyConfig::LaunchApp { .. }
                 | KeyConfig::Macro { .. }
-                | KeyConfig::Sleep { .. } => Visual::Static,
+                | KeyConfig::Sleep { .. }
+                | KeyConfig::Screensaver { .. } => Visual::Static,
                 KeyConfig::MicMute { .. } => Visual::Mute(self.state.mic_muted),
                 KeyConfig::SystemMute { .. } => Visual::Mute(self.state.system_muted),
                 KeyConfig::ObsRecordStart { .. }
@@ -744,7 +765,9 @@ impl Runtime {
                 let path = icon.clone().or_else(|| launch::resolve_icon_path(app));
                 opt_icon(path.as_deref())
             }
-            KeyConfig::Macro { icon, .. } | KeyConfig::Sleep { icon } => opt_icon(icon.as_deref()),
+            KeyConfig::Macro { icon, .. }
+            | KeyConfig::Sleep { icon }
+            | KeyConfig::Screensaver { icon } => opt_icon(icon.as_deref()),
             KeyConfig::MicMute { icon_muted, icon_unmuted } => {
                 opt_icon(mute_icon(self.state.mic_muted, icon_muted, icon_unmuted))
             }
@@ -851,6 +874,7 @@ fn action_name(key: &KeyConfig) -> &'static str {
         KeyConfig::ObsReplaySave { .. } => "obs_replay_save",
         KeyConfig::Widget { .. } => "widget",
         KeyConfig::Sleep { .. } => "sleep",
+        KeyConfig::Screensaver { .. } => "screensaver",
     }
 }
 

@@ -283,6 +283,13 @@ pub enum KeyConfig {
         #[serde(default)]
         icon: Option<PathBuf>,
     },
+
+    /// Instantly turn on the configured screensaver (no-op if `screensaver =
+    /// "none"`). Any key press wakes the deck and is consumed.
+    Screensaver {
+        #[serde(default)]
+        icon: Option<PathBuf>,
+    },
 }
 
 /// A single macro step: either a chord (modifier+key) or literal text.
