@@ -68,14 +68,12 @@ impl Widget {
         self.tile.clone()
     }
 
-    /// Re-sample + re-render if the refresh interval has elapsed. Returns true
-    /// if the tile changed (so the runtime knows to repaint).
-    pub fn maybe_tick(&mut self) -> bool {
-        if self.last_render.elapsed() < self.interval {
-            return false;
+    /// Re-sample + re-render if the refresh interval has elapsed. The bumped
+    /// generation is what the runtime watches to trigger a repaint.
+    pub fn maybe_tick(&mut self) {
+        if self.last_render.elapsed() >= self.interval {
+            self.sample_and_render();
         }
-        self.sample_and_render();
-        true
     }
 
     fn sample_and_render(&mut self) {
@@ -219,15 +217,22 @@ impl CpuSampler {
     /// Busy fraction since the previous sample, from `/proc/stat`.
     fn sample(&mut self) -> Option<f32> {
         let (total, idle) = read_proc_stat()?;
-        let dt = total.checked_sub(self.prev_total)?;
-        let di = idle.checked_sub(self.prev_idle)?;
+        let busy = busy_fraction(self.prev_total, self.prev_idle, total, idle)?;
         self.prev_total = total;
         self.prev_idle = idle;
-        if dt == 0 {
-            return Some(0.0);
-        }
-        Some((1.0 - di as f32 / dt as f32).clamp(0.0, 1.0))
+        Some(busy)
     }
+}
+
+/// Busy fraction between two `/proc/stat` readings; `None` if a counter went
+/// backwards (leaves the sampler's previous values untouched for a retry).
+fn busy_fraction(prev_total: u64, prev_idle: u64, total: u64, idle: u64) -> Option<f32> {
+    let dt = total.checked_sub(prev_total)?;
+    let di = idle.checked_sub(prev_idle)?;
+    if dt == 0 {
+        return Some(0.0);
+    }
+    Some((1.0 - di as f32 / dt as f32).clamp(0.0, 1.0))
 }
 
 /// Parse the aggregate `cpu` line of `/proc/stat` into (total, idle) jiffies.
@@ -288,8 +293,8 @@ const NET_MIN_V: f32 = 4.0 / KEY_SIZE as f32;
 struct NetSampler {
     iface: Option<String>,
     prev: Option<(u64, u64, Instant)>, // rx, tx, when
-    down: VecDeque<f32>,
-    up: VecDeque<f32>,
+    down: History,
+    up: History,
     down_ema: f32, // smoothed bytes/s
     up_ema: f32,
     /// Rolling peak (bytes/s) for the relative fallback (down/up share it).
@@ -305,21 +310,14 @@ impl NetSampler {
         NetSampler {
             iface,
             prev: None,
-            down: VecDeque::with_capacity(COLS),
-            up: VecDeque::with_capacity(COLS),
+            down: History::new(),
+            up: History::new(),
             down_ema: 0.0,
             up_ema: 0.0,
             peak: 1.0,
             ceiling: None,
             ceiling_checked: false,
         }
-    }
-
-    fn push(buf: &mut VecDeque<f32>, v: f32) {
-        if buf.len() == COLS {
-            buf.pop_front();
-        }
-        buf.push_back(v.clamp(0.0, 1.0));
     }
 
     /// Map a smoothed rate (bytes/s) to a 0..1 graph value. Absolute log scale
@@ -376,8 +374,8 @@ impl NetSampler {
                 }
                 let d = self.scale(self.down_ema);
                 let u = self.scale(self.up_ema);
-                Self::push(&mut self.down, d);
-                Self::push(&mut self.up, u);
+                self.down.push(d);
+                self.up.push(u);
             }
             self.prev = Some((rx, tx, now));
         }
@@ -391,8 +389,8 @@ impl NetSampler {
         let mut tile = Tile::from_pixel(KEY_SIZE, KEY_SIZE, BG);
         let mid = KEY_SIZE as i32 / 2;
         let half = mid as f32; // 36px each side
-        silhouette(&mut tile, &self.down, NET_DOWN, mid, half, true);
-        silhouette(&mut tile, &self.up, NET_UP, mid, half, false);
+        silhouette(&mut tile, &self.down.samples, NET_DOWN, mid, half, true);
+        silhouette(&mut tile, &self.up.samples, NET_UP, mid, half, false);
         render::fill_rect(&mut tile, 0, mid, KEY_SIZE, 1, NET_DIVIDER);
         tile
     }
@@ -538,20 +536,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn proc_stat_parses_busy_fraction() {
-        // Two reads with a known delta → 50% busy.
-        let mut cpu = CpuSampler::new();
-        // Seed previous values directly.
-        cpu.prev_total = 0;
-        cpu.prev_idle = 0;
-        // Manually exercise the delta math with synthetic totals.
-        cpu.prev_total = 100;
-        cpu.prev_idle = 50;
-        // Pretend the next read gives total=200, idle=100 → di=50, dt=100 → 50%.
-        let di = 100u64 - cpu.prev_idle;
-        let dt = 200u64 - cpu.prev_total;
-        let busy = 1.0 - di as f32 / dt as f32;
-        assert!((busy - 0.5).abs() < 1e-6);
+    fn cpu_busy_fraction_from_deltas() {
+        // total delta 100, idle delta 50 → 50% busy.
+        assert_eq!(busy_fraction(100, 50, 200, 100), Some(0.5));
+        // No jiffies elapsed → 0%, not a divide-by-zero.
+        assert_eq!(busy_fraction(100, 50, 100, 50), Some(0.0));
+        // A counter moving backwards is rejected.
+        assert_eq!(busy_fraction(200, 60, 100, 50), None);
     }
 
     #[test]
