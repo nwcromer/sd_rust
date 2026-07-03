@@ -318,7 +318,8 @@ a syscall filter, etc.). Launched applications are started via
 Two udev grants are installed, each scoped via `uaccess` (a logind ACL tied to
 your **active local session** — not a world-readable chmod):
 
-1. **Stream Deck HID** (`0fd9:00a5`) — so the daemon can drive the deck.
+1. **Stream Deck HID** (`0fd9:00a5` and `0fd9:0080`) — so the daemon can drive
+   the deck (the scissor-key and classic MK.2 revisions).
 2. **`/dev/uinput`** — required by the keyboard-macro feature.
 
 > ⚠️ **uinput grant.** The `/dev/uinput` grant lets your session create a virtual

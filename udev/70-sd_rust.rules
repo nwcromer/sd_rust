@@ -14,14 +14,18 @@
 # session*) rather than a world-readable chmod or a broad static group. When you
 # log in at the seat, you get access; when you log out, you don't.
 
-# --- Elgato Stream Deck MK.2 (USB 0fd9:00a5) -------------------------------
+# --- Elgato Stream Deck MK.2 (USB 0fd9:00a5 and 0fd9:0080) -----------------
 # sd_rust talks to the deck over its hidraw node (hidapi's Linux backend).
 # Without this rule the node defaults to world-accessible 0666 on many systems;
 # uaccess tightens it to the seated user. ATTRS walks up to the USB device for
 # the vendor/product match because hidraw is a grandchild of the USB device.
+# Two product ids: 00a5 is the scissor-key revision, 0080 the classic MK.2 —
+# both share the 3x5 / 15-key / 72x72 geometry the device layer accepts.
 KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="00a5", TAG+="uaccess"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="0080", TAG+="uaccess"
 # Belt-and-suspenders: also tag the USB device node itself.
 SUBSYSTEM=="usb", ATTR{idVendor}=="0fd9", ATTR{idProduct}=="00a5", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0fd9", ATTR{idProduct}=="0080", TAG+="uaccess"
 
 # --- /dev/uinput (keyboard-macro virtual keyboard) -------------------------
 # SECURITY NOTE: this grant lets the seated user's session create a virtual
