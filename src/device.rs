@@ -9,6 +9,7 @@
 //! so we accept any deck whose grid matches and drive everything off the
 //! reported `Kind`. (Single device for now; see TODO.md.)
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -132,21 +133,25 @@ impl Device {
 }
 
 /// Re-open the deck after a read/connect failure (unplug, hub power-cycle,
-/// suspend), retrying forever with exponential backoff. Blocks the caller —
-/// there's nothing to service until a deck is back (same backoff shape as the
-/// OBS reconnect).
-pub fn reconnect() -> Device {
+/// suspend), retrying with exponential backoff until a deck is back. Returns
+/// `None` if `shutdown` is set while the deck is still gone, so the caller can
+/// exit promptly instead of blocking `systemctl stop` for the whole stop
+/// timeout. Blocks the caller otherwise — there's nothing to service until a
+/// deck is back (same backoff shape as the OBS reconnect).
+pub fn reconnect(shutdown: &AtomicBool) -> Option<Device> {
     const INITIAL_BACKOFF: Duration = Duration::from_secs(2);
     const MAX_BACKOFF: Duration = Duration::from_secs(30);
     let mut backoff = INITIAL_BACKOFF;
     loop {
         // Sleep before every attempt (including the first) so a device that
         // opens but immediately fails can't spin the loop into a busy wait.
-        std::thread::sleep(backoff);
+        if sleep_or_shutdown(backoff, shutdown) {
+            return None;
+        }
         match Device::connect() {
             Ok(device) => {
                 info!("Stream Deck reconnected");
-                return device;
+                return Some(device);
             }
             Err(e) => {
                 warn!("Stream Deck reconnect failed ({e:#}); retrying in {backoff:?}");
@@ -154,4 +159,22 @@ pub fn reconnect() -> Device {
             }
         }
     }
+}
+
+/// Sleep for `dur`, returning `true` early if `shutdown` gets set. Polls in
+/// short slices so a stop/reboot signal is noticed promptly rather than after
+/// the full backoff (`std::thread::sleep` otherwise resumes across the signal's
+/// EINTR and waits out the whole duration).
+fn sleep_or_shutdown(dur: Duration, shutdown: &AtomicBool) -> bool {
+    const SLICE: Duration = Duration::from_millis(100);
+    let mut remaining = dur;
+    while !remaining.is_zero() {
+        if shutdown.load(Ordering::Relaxed) {
+            return true;
+        }
+        let slice = remaining.min(SLICE);
+        std::thread::sleep(slice);
+        remaining -= slice;
+    }
+    shutdown.load(Ordering::Relaxed)
 }

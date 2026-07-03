@@ -10,9 +10,6 @@
 //! Rendering: each tick we compute a cheap [`Visual`] descriptor per key and
 //! only re-upload keys whose descriptor changed. Re-encoding/uploading 15 JPEGs
 //! every 100 ms would waste USB bandwidth and flicker.
-//
-// Layered in over later milestones: OBS state, widgets, idle-blank,
-// suspend/resume, and failure feedback.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -245,7 +242,10 @@ impl Runtime {
                         break;
                     }
                     warn!("Stream Deck read failed ({e:#}); reconnecting");
-                    self.device = device::reconnect();
+                    match device::reconnect(&SHUTDOWN) {
+                        Some(device) => self.device = device,
+                        None => break, // shutdown arrived while the deck was gone
+                    }
                     self.prev_state = [false; KEY_COUNT];
                     self.restore_display();
                     continue;

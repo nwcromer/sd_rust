@@ -11,9 +11,6 @@
 //! in the README. We map characters with a fixed **US QWERTY** layout — the
 //! kernel/compositor maps our keycodes through the *active* layout, so on a
 //! non-US layout some symbols may differ.
-//!
-//! Char→keycode uses the US layout; the active keyboard layout is applied by the
-//! compositor downstream.
 
 use std::thread::sleep;
 use std::time::Duration;
