@@ -15,7 +15,7 @@ It runs as a background **systemd user service**.
   OBS actions (start/stop recording, pause-toggle, enable/disable/save the
   replay buffer).
 - **State-driven keys:** mute keys and OBS record / replay keys swap their image
-  to reflect *live* state (read from `wpctl` and OBS events, not just what
+  to reflect *live* state (read from PipeWire and OBS events, not just what
   sd_rust last did).
 - **Widgets:** CPU, RAM, network, and AMD GPU usage, drawn as live graphs.
 - **Images only** — no text/fonts. Icons come from explicit file paths or are
@@ -30,7 +30,8 @@ It runs as a background **systemd user service**.
 - Linux, **Wayland** (KDE Plasma). v1 is Wayland-only.
 - An Elgato Stream Deck **MK.2** (`0fd9:00a5` — the scissor-key revision — or the
   classic `0fd9:0080`). Single device.
-- **PipeWire / WirePlumber** (`wpctl`) for the mute actions.
+- **PipeWire** with its PulseAudio compatibility (`pipewire-pulse` / libpulse)
+  for the mute actions.
 - **OBS Studio** with **obs-websocket v5** (built in to OBS ≥ 28) for the OBS
   actions — optional.
 - AMD GPU on `amdgpu` for the GPU widget (NVIDIA/Intel are TODO). All metrics are
@@ -186,8 +187,8 @@ icon_unmuted = "/path/mic-on.png"
 icon_muted   = "/path/mic-off.png"
 ```
 
-Pressing toggles mute via `wpctl`; the image follows the live mute state (polled
-~1 s and refreshed instantly on toggle).
+Pressing toggles mute via PipeWire (libpulse); the image follows the live mute
+state (polled ~4×/s and refreshed instantly on toggle).
 
 #### OBS recording
 
@@ -343,5 +344,5 @@ No network exposure beyond the configured local OBS websocket. No telemetry.
 
 Generic run-any-command action; multi-page layouts; configurable awake
 brightness; a GPU-card override and NVIDIA/Intel GPU support; libpulse/event-
-driven mute (vs the current `wpctl` poll); dim-on-lock / blank-on-screensaver;
+driven mute (vs the current libpulse poll); dim-on-lock / blank-on-screensaver;
 per-key error icons; layout-aware macro mapping; multi-device support.

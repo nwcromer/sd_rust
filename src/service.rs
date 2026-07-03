@@ -61,7 +61,7 @@ fn generate_service_file(bin_path: &str) -> String {
     // - HID I/O over /dev/hidraw* and the uinput virtual keyboard over
     //   /dev/uinput (ProtectSystem=strict leaves /dev alone; we don't set
     //   PrivateDevices because that would hide both).
-    // - PipeWire's `wpctl` over a UNIX socket (AF_UNIX).
+    // - PipeWire's PulseAudio socket (libpulse) over a UNIX socket (AF_UNIX).
     // - OBS over a TCP socket (AF_INET / AF_INET6).
     // - System D-Bus for logind's PrepareForSleep; user D-Bus for systemd-run.
     // The daemon only *reads* the config + icon files from $HOME, so

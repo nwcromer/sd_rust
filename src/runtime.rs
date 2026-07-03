@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver as StdReceiver;
 
-use crate::audio::{self, Target};
+use crate::audio::{AudioController, Target};
 use crate::config::{self, Config, KeyConfig, KeyCoord, GRID_COLS, KEY_COUNT};
 use crate::device::{self, Device};
 use crate::keys::MacroKeyboard;
@@ -35,10 +35,14 @@ use crate::widgets::Widget;
 /// How long each `poll_presses` call blocks — also the loop tick.
 const INPUT_POLL: Duration = Duration::from_millis(100);
 
-/// How often to re-read mute state from `wpctl`. Kept short so a mute toggled
-/// elsewhere (KDE shortcut, panel) reflects on the deck quickly; our own
-/// toggles refresh immediately and don't wait for this.
+/// How often to re-read mute state over the persistent PulseAudio connection.
+/// Kept short so a mute toggled elsewhere (KDE shortcut, panel) reflects on the
+/// deck quickly; our own toggles refresh immediately and don't wait for this.
 const AUDIO_POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Minimum gap between audio (re)connect attempts, so a downed audio server
+/// can't stall the loop by retrying the connect on every poll.
+const AUDIO_RECONNECT_INTERVAL: Duration = Duration::from_secs(5);
 
 /// How long an error icon flashes on a key after a failed action (§9).
 const ERROR_FLASH: Duration = Duration::from_millis(800);
@@ -80,9 +84,14 @@ pub struct Runtime {
     /// Last-painted descriptor per key (`None` = never painted / force repaint).
     last_visual: [Option<Visual>; KEY_COUNT],
     prev_state: [bool; KEY_COUNT],
+    /// Persistent PulseAudio connection for mute state. `None` until connected /
+    /// after the server drops; lazily (re)connected by `refresh_audio`.
+    audio: Option<AudioController>,
     last_audio_poll: Instant,
+    /// Throttles audio reconnect attempts (see [`AUDIO_RECONNECT_INTERVAL`]).
+    last_audio_connect: Instant,
     /// Whether any configured key needs mic / system mute state at all (skip the
-    /// `wpctl` polls entirely otherwise).
+    /// mute polls entirely otherwise).
     needs_mic: bool,
     needs_system: bool,
     /// OBS command handle + event stream. `None` when `[obs]` isn't configured.
@@ -153,6 +162,20 @@ pub fn run(config: Config) -> Result<()> {
     let needs_mic = keys.iter().flatten().any(|k| matches!(k, KeyConfig::MicMute { .. }));
     let needs_system = keys.iter().flatten().any(|k| matches!(k, KeyConfig::SystemMute { .. }));
 
+    // Open the persistent audio connection up front if any mute key is mapped.
+    // A failure here is non-fatal — `refresh_audio` retries (throttled).
+    let audio = if needs_mic || needs_system {
+        match AudioController::connect() {
+            Ok(a) => Some(a),
+            Err(e) => {
+                warn!("audio mute state unavailable: {e:#}; will retry");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // Spawn the OBS thread only if `[obs]` is configured. The password is
     // resolved here (env wins) and handed straight to the OBS thread.
     let (obs, obs_events) = match &config.obs {
@@ -194,7 +217,9 @@ pub fn run(config: Config) -> Result<()> {
         state: LiveState::default(),
         last_visual: [None; KEY_COUNT],
         prev_state: [false; KEY_COUNT],
+        audio,
         last_audio_poll: Instant::now(),
+        last_audio_connect: Instant::now(),
         needs_mic,
         needs_system,
         obs,
@@ -259,6 +284,7 @@ impl Runtime {
                     // and that press is CONSUMED — it doesn't trigger its action.
                     self.slept = false;
                     self.set_display(Display::Full);
+                    self.refresh_audio(); // polling is paused while blanked; catch up on wake
                 } else if pressed.iter().any(|&i| self.is_sleep_key(i)) {
                     // Sleep key while awake → blank the deck until any press wakes it.
                     self.slept = true;
@@ -279,15 +305,15 @@ impl Runtime {
                 }
             }
 
-            if self.last_audio_poll.elapsed() >= AUDIO_POLL_INTERVAL {
-                self.refresh_audio();
-            }
             self.drain_obs();
 
-            // While fully blanked the panel is dark and frozen — skip widget
-            // re-render and repaint to save USB bandwidth (state stays fresh via
-            // the polls above and is repainted on wake).
+            // While fully blanked the panel is dark and frozen — skip the mute
+            // poll, widget re-render, and repaint. Nothing is shown, so the
+            // state only needs refreshing on wake (done in the press/resume paths).
             if self.display != Display::Blanked {
+                if self.last_audio_poll.elapsed() >= AUDIO_POLL_INTERVAL {
+                    self.refresh_audio();
+                }
                 self.tick_widgets();
                 self.expire_flashes();
                 self.repaint();
@@ -439,21 +465,17 @@ impl Runtime {
                 None => anyhow::bail!("keyboard macros are disabled (/dev/uinput not accessible)"),
             },
             KeyConfig::MicMute { .. } => {
-                audio::toggle_mute(Target::Source)?;
-                // Refresh immediately so the key reflects the new state now, and
-                // flash the KDE OSD like a normal mic-mute key.
-                self.state.mic_muted = audio::is_muted(Target::Source).ok();
-                if let Some(muted) = self.state.mic_muted {
-                    osd::show_mic_mute(muted);
-                }
+                // toggle_mute returns the new state, so the key + OSD reflect it
+                // immediately without waiting for the next poll.
+                let muted = self.audio_toggle(Target::Source)?;
+                self.state.mic_muted = Some(muted);
+                osd::show_mic_mute(muted);
                 Ok(())
             }
             KeyConfig::SystemMute { .. } => {
-                audio::toggle_mute(Target::Sink)?;
-                self.state.system_muted = audio::is_muted(Target::Sink).ok();
-                if let Some(muted) = self.state.system_muted {
-                    osd::show_system_mute(muted);
-                }
+                let muted = self.audio_toggle(Target::Sink)?;
+                self.state.system_muted = Some(muted);
+                osd::show_system_mute(muted);
                 Ok(())
             }
             KeyConfig::ObsRecordStart { .. } => self.send_obs(index, ObsAction::RecordStart),
@@ -484,20 +506,62 @@ impl Runtime {
         Ok(())
     }
 
-    /// Re-read mute state for whichever targets are actually used.
+    /// Toggle mute on `target`, connecting on demand, and return the new state.
+    fn audio_toggle(&mut self, target: Target) -> Result<bool> {
+        if self.audio.as_ref().is_none_or(|a| !a.is_connected()) {
+            self.audio = Some(AudioController::connect().context("connecting to audio server")?);
+            self.last_audio_connect = Instant::now();
+        }
+        self.audio.as_ref().unwrap().toggle_mute(target)
+    }
+
+    /// Re-read mute state for whichever targets are actually used, over the
+    /// persistent connection (re-establishing it, throttled, if it has dropped).
     fn refresh_audio(&mut self) {
         self.last_audio_poll = Instant::now();
-        if self.needs_mic {
-            match audio::is_muted(Target::Source) {
-                Ok(m) => self.state.mic_muted = Some(m),
-                Err(e) => debug!("mic mute poll failed: {e:#}"),
+        if !self.needs_mic && !self.needs_system {
+            return;
+        }
+        if self.audio.as_ref().is_none_or(|a| !a.is_connected()) {
+            if self.last_audio_connect.elapsed() < AUDIO_RECONNECT_INTERVAL {
+                return;
+            }
+            self.last_audio_connect = Instant::now();
+            match AudioController::connect() {
+                Ok(a) => self.audio = Some(a),
+                Err(e) => {
+                    debug!("audio connect failed: {e:#}");
+                    self.audio = None;
+                    return;
+                }
             }
         }
-        if self.needs_system {
-            match audio::is_muted(Target::Sink) {
-                Ok(m) => self.state.system_muted = Some(m),
-                Err(e) => debug!("system mute poll failed: {e:#}"),
+
+        let audio = self.audio.as_ref().unwrap();
+        let mut lost = false;
+        if self.needs_mic {
+            match audio.is_muted(Target::Source) {
+                Ok(m) => self.state.mic_muted = Some(m),
+                Err(e) => {
+                    debug!("mic mute poll failed: {e:#}");
+                    lost = true;
+                }
             }
+        }
+        if self.needs_system && !lost {
+            match audio.is_muted(Target::Sink) {
+                Ok(m) => self.state.system_muted = Some(m),
+                Err(e) => {
+                    debug!("system mute poll failed: {e:#}");
+                    lost = true;
+                }
+            }
+        }
+        if lost {
+            // Drop the dead connection; the next poll reconnects (throttled).
+            // Leave the last-known mute icons in place until then.
+            self.audio = None;
+            self.last_audio_connect = Instant::now();
         }
     }
 

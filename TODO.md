@@ -11,8 +11,8 @@ Central backlog. Items tagged `[code: file.rs]` also have an inline
 - **GPU card override** — config option to pick a specific card instead of
   auto-detecting the discrete one. `[code: widgets.rs]`
 - **NVIDIA / Intel GPU support** — v1 is AMD-only. `[code: widgets.rs]`
-- **libpulse / event-driven audio** — if `wpctl` shell-out grows limiting.
-  `[code: audio.rs]`
+- **Event-driven audio** — subscribe to PipeWire mute-change events instead of
+  the current libpulse poll. `[code: audio.rs]`
 - **Dim-on-screen-lock / blank-on-system-screensaver** — v1 only blanks on its
   own idle timeout. `[code: runtime.rs]`
 - **Per-key error icons** — v1 has a single global error icon. `[code: runtime.rs]`

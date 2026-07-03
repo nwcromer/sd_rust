@@ -166,7 +166,7 @@ pub enum KeyConfig {
         icon: Option<PathBuf>,
     },
 
-    /// Toggle microphone mute (`wpctl`). State-driven: muted vs unmuted.
+    /// Toggle microphone mute (PipeWire). State-driven: muted vs unmuted.
     MicMute {
         #[serde(default)]
         icon_muted: Option<PathBuf>,
@@ -174,7 +174,7 @@ pub enum KeyConfig {
         icon_unmuted: Option<PathBuf>,
     },
 
-    /// Toggle system output mute (`wpctl`). State-driven: muted vs unmuted.
+    /// Toggle system output mute (PipeWire). State-driven: muted vs unmuted.
     SystemMute {
         #[serde(default)]
         icon_muted: Option<PathBuf>,
