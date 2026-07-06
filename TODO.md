@@ -37,6 +37,6 @@ relates to. TODOs live here, not as markers in the code.
 
 - **Icon margin tuning** — content-aware trim+margin is implemented (8px); the
   margin amount may want tuning.
-- **More OBS icons** — the bundled set in `assets/icons/obs/` doesn't yet cover
-  every OBS action: record start/stop, replay arm/disarm/toggle, and a
-  save-disconnected state.
+- **More OBS icons** — the bundled set in `assets/icons/obs/` lacks
+  replay-buffer arm/disarm/toggle icons (loop-themed, distinct from the save
+  art) and a disconnected state for the save/replay keys.
