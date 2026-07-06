@@ -326,12 +326,15 @@ impl Runtime {
                     self.screensaver_forced = false;
                     self.set_display(Display::Full);
                     self.refresh_audio(); // polling paused while dark (blank/screensaver); catch up on wake
-                } else if pressed.iter().any(|&i| self.is_sleep_key(i)) {
+                } else if !self.recording_in_progress()
+                    && pressed.iter().any(|&i| self.is_sleep_key(i))
+                {
                     // Sleep key while awake → blank the deck until any press wakes it.
                     self.slept = true;
                     self.set_display(Display::Blanked);
                     debug!("sleep");
-                } else if self.screensaver.is_some()
+                } else if !self.recording_in_progress()
+                    && self.screensaver.is_some()
                     && pressed.iter().any(|&i| self.is_screensaver_key(i))
                 {
                     // Screensaver key while awake → start it now (until a press wakes).
@@ -354,6 +357,17 @@ impl Runtime {
             }
 
             self.drain_obs();
+
+            // Recording holds the deck awake (see `recording_in_progress`): resetting
+            // last_input each tick stalls the idle timers and restarts them on stop.
+            if self.recording_in_progress() {
+                self.last_input = Instant::now();
+                self.slept = false;
+                self.screensaver_forced = false;
+                if self.display != Display::Full {
+                    self.set_display(Display::Full);
+                }
+            }
 
             // Blanked/screensaver: the live key content is hidden, so skip the
             // mute poll, widget re-render, and normal repaint. State is refreshed
@@ -405,6 +419,14 @@ impl Runtime {
     /// Whether the key at `index` is a Screensaver key.
     fn is_screensaver_key(&self, index: usize) -> bool {
         matches!(self.keys[index], Some(KeyConfig::Screensaver { .. }))
+    }
+
+    /// Whether a recording is actively in progress (not merely paused). While
+    /// true the deck is held awake: idle dim/screensaver/blank and the manual
+    /// Sleep/Screensaver keys are suppressed, and any already-active idle or
+    /// sleep state is cancelled.
+    fn recording_in_progress(&self) -> bool {
+        self.state.record == RecordState::Recording
     }
 
     /// The display state implied by how long we've been idle. The idle hierarchy
