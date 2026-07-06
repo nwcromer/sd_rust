@@ -1,7 +1,8 @@
-//! Idle "Matrix"-style screensaver: green digital rain drawn across the whole
-//! deck. Font-free (§7/§8) — the glyphs are hand-coded 5×7 bitmaps, not a real
-//! font, so v1 keeps its no-font-dependency promise while still reading as
-//! streams of mutating characters rather than plain bars.
+//! Idle "Matrix"-style screensaver: digital rain drawn across the whole deck,
+//! in a colour re-picked from a small palette each time it activates. Font-free
+//! (§7/§8) — the glyphs are hand-coded 5×7 bitmaps, not a real font, so v1 keeps
+//! its no-font-dependency promise while still reading as streams of mutating
+//! characters rather than plain bars.
 //!
 //! The rain flows across the key gaps, so a single deck-wide canvas is drawn each
 //! frame and sliced into the 15 per-key tiles the runtime uploads.
@@ -58,10 +59,23 @@ struct Column {
     glyphs: Vec<u8>,
 }
 
+/// Base rain colours, one picked per activation. Each is the vivid tail colour;
+/// the head is a near-white tint of it and the tail fades to a dim version.
+const PALETTE: [Rgb<u8>; 6] = [
+    Rgb([0, 255, 30]),   // green (classic)
+    Rgb([0, 230, 255]),  // cyan
+    Rgb([255, 55, 40]),  // red
+    Rgb([190, 80, 255]), // purple
+    Rgb([255, 170, 0]),  // amber
+    Rgb([70, 120, 255]), // blue
+];
+
 pub struct Matrix {
     columns: Vec<Column>,
     /// xorshift64 state (hand-rolled to avoid a `rand` dependency).
     rng: u64,
+    /// Base rain colour for the current activation (see [`PALETTE`]).
+    color: Rgb<u8>,
     canvas: RgbImage,
 }
 
@@ -84,7 +98,19 @@ impl Matrix {
                 glyphs: vec![0; ROWS as usize],
             })
             .collect();
-        Matrix { columns, rng: seed, canvas: RgbImage::new(CANVAS_W, CANVAS_H) }
+        let mut m = Matrix {
+            columns,
+            rng: seed,
+            color: PALETTE[0],
+            canvas: RgbImage::new(CANVAS_W, CANVAS_H),
+        };
+        m.reseed_color();
+        m
+    }
+
+    /// Pick a fresh rain colour from [`PALETTE`]. Called on each activation.
+    pub fn reseed_color(&mut self) {
+        self.color = PALETTE[(self.rand() % PALETTE.len() as u64) as usize];
     }
 
     fn rand(&mut self) -> u64 {
@@ -161,7 +187,7 @@ impl Matrix {
     /// Draw the current frame and slice it into the 15 per-key tiles.
     pub fn render(&mut self) -> Vec<Tile> {
         // Split the borrows so we can read `columns` while writing `canvas`.
-        let Matrix { columns, canvas, .. } = self;
+        let Matrix { columns, canvas, color, .. } = self;
         for px in canvas.pixels_mut() {
             *px = Rgb([0, 0, 0]);
         }
@@ -175,7 +201,8 @@ impl Matrix {
                     continue;
                 }
                 let glyph = &GLYPHS[c.glyphs[row as usize] as usize];
-                draw_glyph(canvas, i as u32 * CELL, row as u32 * CELL, glyph, cell_color(d, c.len));
+                let col = cell_color(*color, d, c.len);
+                draw_glyph(canvas, i as u32 * CELL, row as u32 * CELL, glyph, col);
             }
         }
 
@@ -215,14 +242,16 @@ fn draw_glyph(canvas: &mut RgbImage, cx: u32, cy: u32, glyph: &[u8; 7], color: R
     }
 }
 
-/// Colour a glyph by its distance `d` behind the head: bright white-green head,
-/// fading through green to near-black at the tail.
-fn cell_color(d: i32, len: i32) -> Rgb<u8> {
+/// Colour a glyph by its distance `d` behind the head, in `base`: a near-white
+/// tint of `base` at the head, fading to a dim `base` at the tail.
+fn cell_color(base: Rgb<u8>, d: i32, len: i32) -> Rgb<u8> {
     if d == 0 {
-        return Rgb([180, 255, 180]);
+        let tint = |c: u8| (c as f32 + (255.0 - c as f32) * 0.7) as u8;
+        return Rgb([tint(base[0]), tint(base[1]), tint(base[2])]);
     }
     let t = 1.0 - d as f32 / len as f32; // 1 just behind the head → 0 at the tail
-    Rgb([0, (60.0 + 195.0 * t) as u8, (30.0 * t) as u8])
+    let b = 0.235 + 0.765 * t; // brightness: dim at the tail → full near the head
+    Rgb([(base[0] as f32 * b) as u8, (base[1] as f32 * b) as u8, (base[2] as f32 * b) as u8])
 }
 
 #[cfg(test)]
@@ -230,12 +259,11 @@ mod tests {
     use super::*;
 
     /// Stepping and rendering many frames never panics (glyphs stay in bounds),
-    /// always yields the 15 correctly-sized tiles, and actually paints green rain
-    /// (a green channel with black R/B, never stray colours).
+    /// always yields the 15 correctly-sized tiles, and actually paints rain.
     #[test]
     fn steps_and_renders_in_bounds() {
         let mut m = Matrix::new();
-        let mut saw_green = false;
+        let mut saw_lit = false;
         for _ in 0..1000 {
             m.step();
             let tiles = m.render();
@@ -243,13 +271,11 @@ mod tests {
             for t in &tiles {
                 assert!(t.width() == KEY_SIZE && t.height() == KEY_SIZE);
                 for p in t.pixels() {
-                    // Rain is green: red only appears in the near-white head.
-                    assert!(p[1] >= p[0] && p[1] >= p[2], "non-green pixel {p:?}");
-                    saw_green |= p[1] > 0;
+                    saw_lit |= p[0] > 0 || p[1] > 0 || p[2] > 0;
                 }
             }
         }
-        assert!(saw_green, "1000 frames produced no rain");
+        assert!(saw_lit, "1000 frames produced no rain");
     }
 }
 

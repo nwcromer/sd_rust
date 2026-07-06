@@ -460,6 +460,9 @@ impl Runtime {
         self.display = state;
         debug!("display → {state:?} (brightness {level})");
         if state == Display::Screensaver {
+            if let Some(m) = self.screensaver.as_mut() {
+                m.reseed_color(); // fresh colour each activation
+            }
             self.screensaver_prev = None; // force a full first frame
         }
     }
